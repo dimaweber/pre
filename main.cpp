@@ -13,6 +13,7 @@
 #include <QBarSet>
 #include <QBarCategoryAxis>
 #include <QBoxLayout>
+#include <QValueAxis>
 #include <iostream>
 #include <iomanip>
 
@@ -139,6 +140,10 @@ int main(int argc, char *argv[])
     QBarSeries bars;
     QBarSet volume("Volume");
 
+    double maxVolume=0;
+    double minVolume = 1e20;
+    double minRate = 1e20;
+    double maxRate  = 0;
     for (Period* period: periods)
     {
         std::cout << qPrintable(period->periodStart.toString(Qt::ISODate)) << "     "
@@ -153,6 +158,10 @@ int main(int argc, char *argv[])
         categories << period->periodStart.toString("dd HH");
         series.append(candle);
         volume.append(period->vol);
+        minRate = qMin(period->min, minRate);
+        maxRate = qMax(period->max, maxRate);
+        maxVolume = qMax(period->vol, maxVolume);
+        minVolume = qMin(period->vol, minVolume);
     }
 
     series.setName("BTC / USD");
@@ -160,37 +169,38 @@ int main(int argc, char *argv[])
     series.setDecreasingColor(QColor(Qt::red));
 
     bars.append(&volume);
+    volume.setBrush(QBrush(QColor(34, 45, 178, 64)));
 
     QWidget* widget = new QWidget;
     QChart chart;
-    QChart chartV;
     chart.addSeries(&series);
-    chartV.addSeries(&bars);
+    chart.addSeries(&bars);
     chart.setTitle("BTC / USD");
     chart.setAnimationOptions(QChart::SeriesAnimations);
-    chart.createDefaultAxes();
-    chartV.setTitle("BTC / USD");
-    chartV.setAnimationOptions(QChart::SeriesAnimations);
-    chartV.createDefaultAxes();
 
     QChartView *chartView = new QChartView(widget);
     chartView->setRenderHint(QPainter::Antialiasing);
-    QChartView *chartVView = new QChartView(widget);
-    chartVView->setRenderHint(QPainter::Antialiasing);
 
     chartView->setChart(&chart);
-    chartVView->setChart(&chartV);
 
-    QBarCategoryAxis *axisX = qobject_cast<QBarCategoryAxis *>(chart.axes(Qt::Horizontal).at(0));
-    QBarCategoryAxis *axisXV = qobject_cast<QBarCategoryAxis *>(chartV.axes(Qt::Horizontal).at(0));
-    axisX->setCategories(categories);
+    chartView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    QBarCategoryAxis *axisX = new QBarCategoryAxis();
+    axisX->append(categories);
+    chart.setAxisX(axisX, &series);
+    chart.setAxisX(axisX, &bars);
     axisX->setLabelsAngle(60);
-    axisXV->setCategories(categories);
-    axisXV->setLabelsAngle(60);
+
+    QValueAxis *axisY = new QValueAxis();
+    chart.setAxisY(axisY, &series);
+    axisY->setRange(0.99 * minRate, 1.01 * maxRate);
+
+    QValueAxis *axisY1 = new QValueAxis();
+    chart.setAxisY(axisY1, &bars);
+    axisY1->setRange(minVolume, maxVolume*4);
 
     widget->setLayout(new QVBoxLayout);
     widget->layout()->addWidget(chartView);
-    widget->layout()->addWidget(chartVView);
 
     widget->show();
     return a.exec();
