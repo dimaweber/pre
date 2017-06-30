@@ -11,7 +11,7 @@
 #include <QCandlestickSet>
 #include <QBarSeries>
 #include <QBarSet>
-#include <QBarCategoryAxis>
+#include <QDateTimeAxis>
 #include <QBoxLayout>
 #include <QValueAxis>
 #include <iostream>
@@ -51,12 +51,19 @@ struct Period
     }
 };
 
+struct VolumeHistoryRecord
+{
+    QDateTime time;
+    double volume_24h;
+    double moment_volume;
+};
+
 using namespace QtCharts;
 
 
-#define DAYS 3
-#define granularity_hours 0
-#define granularity_minutes 30
+#define DAYS 7
+#define granularity_hours 4
+#define granularity_minutes 0
 
 int main(int argc, char *argv[])
 {
@@ -75,7 +82,7 @@ int main(int argc, char *argv[])
     }
 
     QSqlQuery query(db);
-    QString sql  = "select time,last_rate,goods_volume from rates where currency='usd' and goods='btc' and time >= now() - interval :int day  order by time asc";
+    QString sql  = "select time,last_rate,currency_volume from rates where currency='usd' and goods='btc' and time >= now() - interval :int day  order by time asc";
     if (!query.prepare(sql))
     {
         std::cerr << qPrintable(query.lastError().text()) << std::endl;
@@ -94,8 +101,10 @@ int main(int argc, char *argv[])
 
     Period* period = nullptr;
     QList<Period*> periods;
+    QVector<VolumeHistoryRecord> volumeHistory;
 
     double prevVolume = 0;
+    int n = 0;
 
     while (query.next())
     {
@@ -103,14 +112,42 @@ int main(int argc, char *argv[])
         Rate rate = query.value(1).toDouble();
         double volume = query.value(2).toDouble();
 
+        VolumeHistoryRecord rec;
+        rec.time = time;
+        rec.volume_24h = volume;
+        rec.moment_volume = 0;
+        QDateTime one_day_before = time.addDays(-1);
+        if (volumeHistory.size() > 0 && one_day_before >= volumeHistory.at(0).time)
+        {
+            int k = n - (24*60*60 / 10);
+            if ( k >= 0)
+            {
+                while (volumeHistory[k].time > one_day_before)
+                    k--;
+                k++;
+                while (volumeHistory[k].time < one_day_before)
+                    k++;
+                rec.moment_volume = rec.volume_24h - prevVolume + volumeHistory[k].moment_volume;
+                if (rec.moment_volume < 0)
+                {
+                    if (volumeHistory[k].moment_volume == 0)
+                        volumeHistory[k].moment_volume = -rec.moment_volume;
+                    rec.moment_volume = 0;
+                }
+                std::cout << k << " " << qPrintable(volumeHistory[k].time.toString(Qt::ISODate)) <<  "  " << volumeHistory[k].volume_24h << "    " << volumeHistory[k].moment_volume << std::endl;
+            }
+        }
+        std::cout << n << " "<< qPrintable(rec.time.toString(Qt::ISODate)) <<  "  " << rec.volume_24h << "    " << rec.moment_volume << std::endl;
+        n++;
+        volumeHistory.append(rec);
+
         if (period)
         {
             period->periodEnd = time;
             period->close = rate;
             period->max = qMax(period->max, rate);
             period->min = qMin(period->min, rate);
-            period->vol += volume;
-
+            period->vol += rec.moment_volume;
         }
 
         if (periodStart.secsTo(time) > granularitySec)
@@ -131,7 +168,6 @@ int main(int argc, char *argv[])
         }
         prevVolume = volume;
     }
-
 
     // DISPLAY
     QStringList categories;
@@ -154,8 +190,8 @@ int main(int argc, char *argv[])
                   << std::setw(8) << period->isRise()
                   << std::endl;
 
-        candle = new QCandlestickSet(period->open, period->max, period->min, period->close, period->periodStart.toSecsSinceEpoch());
-        categories << period->periodStart.toString("dd HH");
+        candle = new QCandlestickSet(period->open, period->max, period->min, period->close, period->periodStart.toMSecsSinceEpoch());
+        categories << period->periodStart.toString("dd HH:mm");
         series.append(candle);
         volume.append(period->vol);
         minRate = qMin(period->min, minRate);
@@ -185,10 +221,12 @@ int main(int argc, char *argv[])
 
     chartView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    QBarCategoryAxis *axisX = new QBarCategoryAxis();
-    axisX->append(categories);
+    QDateTimeAxis *axisX = new QDateTimeAxis();
+    axisX->setTickCount(10);
+    axisX->setFormat("MMM dd HH:mm");
+    axisX->setTitleText("Date");
     chart.setAxisX(axisX, &series);
-    chart.setAxisX(axisX, &bars);
+    //chart.setAxisX(axisX, &bars);
     axisX->setLabelsAngle(60);
 
     QValueAxis *axisY = new QValueAxis();
@@ -202,6 +240,8 @@ int main(int argc, char *argv[])
     widget->setLayout(new QVBoxLayout);
     widget->layout()->addWidget(chartView);
 
+    widget->setMinimumSize(1024, 768);
     widget->show();
+
     return a.exec();
 }
