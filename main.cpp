@@ -26,7 +26,6 @@ struct Period
     Rate min;
     Rate max;
     double vol;
-    double cur_vol;
     QDateTime periodStart;
     QDateTime periodEnd;
 
@@ -51,19 +50,12 @@ struct Period
     }
 };
 
-struct VolumeHistoryRecord
-{
-    QDateTime time;
-    double volume_24h;
-    double moment_volume;
-};
-
 using namespace QtCharts;
 
 
-#define DAYS 7
-#define granularity_hours 4
-#define granularity_minutes 0
+#define DAYS 1
+#define granularity_hours 0
+#define granularity_minutes 15
 
 int main(int argc, char *argv[])
 {
@@ -71,10 +63,10 @@ int main(int argc, char *argv[])
 
     // GET DATA
     QSqlDatabase db = QSqlDatabase::addDatabase("QMYSQL", "conn");
-    db.setHostName("192.168.10.4");
-    db.setDatabaseName("trade");
-    db.setUserName("trader");
-    db.setPassword("traderpassword");
+    db.setHostName("mysql-master.vm.dweber.lan");
+    db.setDatabaseName("rates");
+    db.setUserName("rates");
+    db.setPassword("rates");
 
     if (!db.open())
     {
@@ -82,12 +74,17 @@ int main(int argc, char *argv[])
     }
 
     QSqlQuery query(db);
-    QString sql  = "select time,last_rate,currency_volume from rates where currency='usd' and goods='btc' and time >= now() - interval :int day  order by time asc";
+    QTime granularity (granularity_hours, granularity_minutes, 0);
+    int granularitySec = QTime(0,0,0).secsTo(granularity);
+    int s = QDateTime::currentDateTime().toSecsSinceEpoch();
+    QDateTime periodStart = QDateTime::fromSecsSinceEpoch(s - s % granularitySec + granularitySec).addDays(-DAYS);
+    QString sql  = "select time,rate,amount from rates where exchange='btc-e' and pair='btc_usd'  and time >= :start order by time asc";
+
     if (!query.prepare(sql))
     {
         std::cerr << qPrintable(query.lastError().text()) << std::endl;
     }
-    query.bindValue(":int", DAYS);
+    query.bindValue(":start", periodStart);
 
     if (!query.exec())
     {
@@ -95,16 +92,8 @@ int main(int argc, char *argv[])
     }
 
     // GROUP DATA
-    QDateTime periodStart = QDateTime::currentDateTime().addDays(-DAYS - 2);
-    QTime granularity (granularity_hours, granularity_minutes, 0);
-    int granularitySec = QTime(0,0,0).secsTo(granularity);
-
     Period* period = nullptr;
     QList<Period*> periods;
-    QVector<VolumeHistoryRecord> volumeHistory;
-
-    double prevVolume = 0;
-    int n = 0;
 
     while (query.next())
     {
@@ -112,42 +101,13 @@ int main(int argc, char *argv[])
         Rate rate = query.value(1).toDouble();
         double volume = query.value(2).toDouble();
 
-        VolumeHistoryRecord rec;
-        rec.time = time;
-        rec.volume_24h = volume;
-        rec.moment_volume = 0;
-        QDateTime one_day_before = time.addDays(-1);
-        if (volumeHistory.size() > 0 && one_day_before >= volumeHistory.at(0).time)
-        {
-            int k = n - (24*60*60 / 10);
-            if ( k >= 0)
-            {
-                while (volumeHistory[k].time > one_day_before)
-                    k--;
-                k++;
-                while (volumeHistory[k].time < one_day_before)
-                    k++;
-                rec.moment_volume = rec.volume_24h - prevVolume + volumeHistory[k].moment_volume;
-                if (rec.moment_volume < 0)
-                {
-                    if (volumeHistory[k].moment_volume == 0)
-                        volumeHistory[k].moment_volume = -rec.moment_volume;
-                    rec.moment_volume = 0;
-                }
-                std::cout << k << " " << qPrintable(volumeHistory[k].time.toString(Qt::ISODate)) <<  "  " << volumeHistory[k].volume_24h << "    " << volumeHistory[k].moment_volume << std::endl;
-            }
-        }
-        std::cout << n << " "<< qPrintable(rec.time.toString(Qt::ISODate)) <<  "  " << rec.volume_24h << "    " << rec.moment_volume << std::endl;
-        n++;
-        volumeHistory.append(rec);
-
         if (period)
         {
             period->periodEnd = time;
             period->close = rate;
             period->max = qMax(period->max, rate);
             period->min = qMin(period->min, rate);
-            period->vol += rec.moment_volume;
+            period->vol += volume;
         }
 
         if (periodStart.secsTo(time) > granularitySec)
@@ -166,7 +126,6 @@ int main(int argc, char *argv[])
 
             periodStart = time;
         }
-        prevVolume = volume;
     }
 
     // DISPLAY
@@ -182,14 +141,6 @@ int main(int argc, char *argv[])
     double maxRate  = 0;
     for (Period* period: periods)
     {
-        std::cout << qPrintable(period->periodStart.toString(Qt::ISODate)) << "     "
-                  << qPrintable(period->periodEnd.toString(Qt::ISODate)) << "     "
-                  << std::setw(8) << qPrintable(QString::number(period->upper_tail_size(), 'f', 3)) << "   "
-                  << std::setw(8) << qPrintable(QString::number(period->body_size(), 'f', 3)) << "   "
-                  << std::setw(8) << qPrintable(QString::number(period->lower_tail_size(), 'f', 3)) << "   "
-                  << std::setw(8) << period->isRise()
-                  << std::endl;
-
         candle = new QCandlestickSet(period->open, period->max, period->min, period->close, period->periodStart.toMSecsSinceEpoch());
         categories << period->periodStart.toString("dd HH:mm");
         series.append(candle);
