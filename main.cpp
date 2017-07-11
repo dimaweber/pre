@@ -53,9 +53,9 @@ struct Period
 using namespace QtCharts;
 
 
-#define DAYS 1
-#define granularity_hours 0
-#define granularity_minutes 15
+#define DAYS 10
+#define granularity_hours 1
+#define granularity_minutes 0
 
 int main(int argc, char *argv[])
 {
@@ -73,18 +73,22 @@ int main(int argc, char *argv[])
         std::cerr << qPrintable(db.lastError().text()) << std::endl;
     }
 
+    QString exchange = "btc-e";
+    QString pair = "btc_usd";
     QSqlQuery query(db);
     QTime granularity (granularity_hours, granularity_minutes, 0);
     int granularitySec = QTime(0,0,0).secsTo(granularity);
     int s = QDateTime::currentDateTime().toSecsSinceEpoch();
     QDateTime periodStart = QDateTime::fromSecsSinceEpoch(s - s % granularitySec + granularitySec).addDays(-DAYS);
-    QString sql  = "select time,rate,amount from rates where exchange='btc-e' and pair='btc_usd'  and time >= :start order by time asc";
+    QString sql  = "select time,rate,amount from rates where exchange=:exchange and pair=:pair  and time >= :start order by time asc";
 
     if (!query.prepare(sql))
     {
         std::cerr << qPrintable(query.lastError().text()) << std::endl;
     }
     query.bindValue(":start", periodStart);
+    query.bindValue(":exchange", exchange);
+    query.bindValue(":pair", pair);
 
     if (!query.exec())
     {
@@ -151,7 +155,7 @@ int main(int argc, char *argv[])
         minVolume = qMin(period->vol, minVolume);
     }
 
-    series.setName("BTC / USD");
+    series.setName(pair);
     series.setIncreasingColor(QColor(Qt::green));
     series.setDecreasingColor(QColor(Qt::red));
 
@@ -162,7 +166,7 @@ int main(int argc, char *argv[])
     QChart chart;
     chart.addSeries(&series);
     chart.addSeries(&bars);
-    chart.setTitle("BTC / USD");
+    chart.setTitle(QString("Exchange: %1 (%2 days, %3h:%4m granularity)").arg(exchange).arg(DAYS).arg(granularity_hours).arg(granularity_minutes));
     chart.setAnimationOptions(QChart::SeriesAnimations);
 
     QChartView *chartView = new QChartView(widget);
@@ -181,11 +185,13 @@ int main(int argc, char *argv[])
     axisX->setLabelsAngle(60);
 
     QValueAxis *axisY = new QValueAxis();
-    chart.setAxisY(axisY, &series);
+    chart.addAxis(axisY, Qt::AlignRight);
+    series.attachAxis(axisY);
     axisY->setRange(0.99 * minRate, 1.01 * maxRate);
 
     QValueAxis *axisY1 = new QValueAxis();
-    chart.setAxisY(axisY1, &bars);
+    chart.addAxis(axisY1, Qt::AlignLeft);
+    bars.attachAxis(axisY1);
     axisY1->setRange(minVolume, maxVolume*4);
 
     widget->setLayout(new QVBoxLayout);
